@@ -13,6 +13,8 @@
 
 #define SERVER_ID 0
 
+//TODO: 在线判断和写入不是原子操作
+
 class OnlineUsers
 {
 public:
@@ -48,6 +50,12 @@ private:
 };
 
 static OnlineUsers s_OnlineUsers;
+
+//TODO: 客户端如果没登录就断线，会：
+// 用一个随机 UID 去 SetOffline()
+// 可能把别的正常在线用户踢下线
+// User 构造时把 m_UID = 0（或 std::optional<uint32_t>）
+// SetOffline 前先判断 user.GetUID() != 0
 
 // 处理每个客户端连接
 void handle_client(SocketHandle client_socket)
@@ -155,6 +163,7 @@ void handle_client(SocketHandle client_socket)
                 {
                     SocketHandle target_socket = s_OnlineUsers.GetSocket(msg.m_TargetUID);
                     if (target_socket != kInvalidSocket)
+                        //TODO; send 失败不会清理在线状态
                         msg.Send(target_socket);
                 }
                 else
@@ -209,6 +218,7 @@ int main()
 
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
+    //TODO: 使用更新接口
     server_addr.sin_addr.s_addr = inet_addr(host.c_str());
     server_addr.sin_port = htons(port);
 

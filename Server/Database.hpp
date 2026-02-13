@@ -186,6 +186,7 @@ public:
     }
 
     // 将一条消息追加到文件末尾
+    //TODO: 消息里有逗号/换行会把数据库文件搞坏
     static bool SaveMessage(const Message& msg, const std::string& filename) {
         std::lock_guard<std::mutex> lock(m_Mtx);
         std::ofstream ofs(filename, std::ios::app);
@@ -201,6 +202,7 @@ public:
     }
 
     // 读取并删除给定 targetUID 的所有消息，返回这些消息
+    //TODO: 缺少异常保护：遇到脏行会直接 throw
     static std::vector<Message> LoadMessages(uint32_t targetUID, const std::string& filename) {
         std::lock_guard<std::mutex> lock(m_Mtx);
         std::ifstream ifs(filename);

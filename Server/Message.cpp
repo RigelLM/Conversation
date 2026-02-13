@@ -2,6 +2,7 @@
 
 #include <vector>
 
+//TODO: 写一个 RecvAll / SendAll 循环，确保收/发够指定字节数
 bool Message::Receive(SocketHandle socket)
 {
     char buffer[HeaderSize];
