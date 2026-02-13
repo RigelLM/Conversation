@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <string>
 #include <unordered_map>
@@ -7,6 +7,7 @@
 #include <sstream>
 #include <cstdint>
 #include <mutex>
+#include <algorithm>
 
 #include "Message.hpp"
 
@@ -213,14 +214,14 @@ public:
             std::istringstream iss(line);
             std::string field;
             uint32_t tgt, snd, ts;
-            uint8_t typeInt;
+            uint32_t typeInt;
             // 解析前四个字段
             if (!std::getline(iss, field, ',')) continue;
             tgt = std::stoul(field);
             if (!std::getline(iss, field, ',')) continue;
             snd = std::stoul(field);
             if (!std::getline(iss, field, ',')) continue;
-            typeInt = std::stoul(field);
+            typeInt = static_cast<uint32_t>(std::stoul(field));
             if (!std::getline(iss, field, ',')) continue;
             ts = std::stoul(field);
             // 剩余即为 message content（可能含逗号）
