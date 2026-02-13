@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <arpa/inet.h>
 #include <string>
+
+#include "NetCompat.hpp"
 
 enum class MessageType : uint8_t
 {
@@ -27,9 +28,9 @@ public:
     Message() = default;
     ~Message() = default;
 
-    bool Receive(uint32_t socket);
+    bool Receive(SocketHandle socket);
 
-    bool Send(uint32_t socket) const;
+    bool Send(SocketHandle socket) const;
 
 private:
     // 将协议数据打包成字节流

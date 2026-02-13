@@ -1,7 +1,12 @@
 #include <iostream>
 #include <thread>
-#include <unistd.h>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+#include <sstream>
+#include <ctime>
 
+#include "NetCompat.hpp"
 #include "Message.hpp"
 #include "User.hpp"
 #include "Database.hpp"
@@ -17,14 +22,14 @@ public:
         return UID2Socket.find(uid) != UID2Socket.end();
     }
 
-    int GetSocket(uint32_t uid)
+    SocketHandle GetSocket(uint32_t uid)
     {
         std::lock_guard<std::mutex> lk(m_Mtx);
         auto it = UID2Socket.find(uid);
-        return it != UID2Socket.end() ? it->second : -1;
+        return it != UID2Socket.end() ? it->second : kInvalidSocket;
     }
 
-    bool SetOnline(uint32_t uid, int socket)
+    bool SetOnline(uint32_t uid, SocketHandle socket)
     {
         std::lock_guard<std::mutex> lk(m_Mtx);
         auto [it, inserted] = UID2Socket.emplace(uid, socket);
@@ -38,14 +43,14 @@ public:
     }
 
 private:
-    std::unordered_map<uint32_t, int> UID2Socket;
-    std::mutex                       m_Mtx;
+    std::unordered_map<uint32_t, SocketHandle> UID2Socket;
+    std::mutex                                 m_Mtx;
 };
 
 static OnlineUsers s_OnlineUsers;
 
 // 处理每个客户端连接
-void handle_client(int client_socket)
+void handle_client(SocketHandle client_socket)
 {
     User user;
 
@@ -55,7 +60,7 @@ void handle_client(int client_socket)
         {
             Message msg;
 
-            if(!msg.Receive(client_socket))
+            if (!msg.Receive(client_socket))
             {
                 // 客户端断开时，移除该客户端
                 if (s_OnlineUsers.SetOffline(user.GetUID()))
@@ -72,30 +77,29 @@ void handle_client(int client_socket)
                 Message replyMsg;
                 replyMsg.m_SenderUID = SERVER_ID;
                 replyMsg.m_Type = MessageType::LOGIN;
-                replyMsg.m_Timestamp = std::time(0);
+                replyMsg.m_Timestamp = static_cast<uint32_t>(std::time(nullptr));
 
                 if (user.Login(msg.m_Data))
                 {
                     if (s_OnlineUsers.IsOnline(user.GetUID()))
                     {
-                        // TODO: login already online account
+                        //TODO: login already online account
                         replyMsg.m_TargetUID = msg.m_SenderUID;
                         replyMsg.m_Data = "Conflict";
-                        replyMsg.m_Size = replyMsg.m_Data.length();
+                        replyMsg.m_Size = static_cast<uint32_t>(replyMsg.m_Data.length());
 
                         replyMsg.Send(client_socket);
-
                         break;
                     }
                     else
                     {
-                        if(s_OnlineUsers.SetOnline(user.GetUID(), client_socket))
+                        if (s_OnlineUsers.SetOnline(user.GetUID(), client_socket))
                         {
                             std::cout << user.GetUID() << " connected" << std::endl;
 
                             replyMsg.m_TargetUID = user.GetUID();
                             replyMsg.m_Data = "Success";
-                            replyMsg.m_Size = replyMsg.m_Data.length();
+                            replyMsg.m_Size = static_cast<uint32_t>(replyMsg.m_Data.length());
 
                             replyMsg.Send(client_socket);
                         }
@@ -105,10 +109,9 @@ void handle_client(int client_socket)
                 {
                     replyMsg.m_TargetUID = msg.m_SenderUID;
                     replyMsg.m_Data = "Failed";
-                    replyMsg.m_Size = replyMsg.m_Data.length();
+                    replyMsg.m_Size = static_cast<uint32_t>(replyMsg.m_Data.length());
 
                     replyMsg.Send(client_socket);
-
                     break;
                 }
             }
@@ -120,23 +123,21 @@ void handle_client(int client_socket)
                     replyMsg.m_TargetUID = msg.m_SenderUID;
                     replyMsg.m_SenderUID = SERVER_ID;
                     replyMsg.m_Type = MessageType::TEXT;
-                    replyMsg.m_Timestamp = std::time(0);
+                    replyMsg.m_Timestamp = static_cast<uint32_t>(std::time(nullptr));
 
                     std::vector<uint32_t> friendlist = user.GetFriendList();
                     std::ostringstream oss;
                     for (size_t i = 0; i < friendlist.size(); ++i)
                     {
-                        // TODO: implement {username,uid;username2,uid2}
                         oss << Database::GetUsername(friendlist[i]) << ',' << friendlist[i];
-                        if (i + 1 < friendlist.size()) 
+                        if (i + 1 < friendlist.size())
                             oss << ';';
                     }
 
                     replyMsg.m_Data = oss.str();
-                    replyMsg.m_Size = replyMsg.m_Data.length();
+                    replyMsg.m_Size = static_cast<uint32_t>(replyMsg.m_Data.length());
 
                     replyMsg.Send(client_socket);
-
                 }
                 else if (msg.m_Data == "OfflineMessage")
                 {
@@ -152,13 +153,13 @@ void handle_client(int client_socket)
                 // if online
                 if (s_OnlineUsers.IsOnline(msg.m_TargetUID))
                 {
-                    int target_socket = s_OnlineUsers.GetSocket(msg.m_TargetUID);
-                    msg.Send(target_socket);
+                    SocketHandle target_socket = s_OnlineUsers.GetSocket(msg.m_TargetUID);
+                    if (target_socket != kInvalidSocket)
+                        msg.Send(target_socket);
                 }
                 else
                 {
                     Database::SaveMessage(msg, "db/offlinemsg.txt");
-
                     // TODO: 离线消息不能有换行
                 }
             }
@@ -169,34 +170,44 @@ void handle_client(int client_socket)
         std::cerr << "Connection error" << std::endl;
     }
 
-    close(client_socket);
+    NetClose(client_socket);
 }
 
 int main()
 {
+    // Windows: WSAStartup; POSIX: no-op
+    if (!NetInit())
+    {
+        std::cerr << "NetInit failed." << std::endl;
+        return 1;
+    }
+
     if (!Database::LoadUsers("db/users.txt"))
     {
         std::cerr << "Unable to open user database" << std::endl;
+        NetShutdown();
         return 1;
     }
 
     if (!Database::LoadFriends("db/friends.txt"))
     {
         std::cerr << "Unable to open friends database" << std::endl;
+        NetShutdown();
         return 1;
     }
 
     const std::string host("0.0.0.0");
     const uint32_t port = 25565;
 
-    int server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket == -1)
+    SocketHandle server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_socket == kInvalidSocket)
     {
         std::cerr << "Socket creation failed." << std::endl;
+        NetShutdown();
         return -1;
     }
 
-    sockaddr_in server_addr;
+    sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr(host.c_str());
     server_addr.sin_port = htons(port);
@@ -204,12 +215,16 @@ int main()
     if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0)
     {
         std::cerr << "Bind failed." << std::endl;
+        NetClose(server_socket);
+        NetShutdown();
         return -1;
     }
 
     if (listen(server_socket, 5) < 0)
     {
         std::cerr << "Listen failed." << std::endl;
+        NetClose(server_socket);
+        NetShutdown();
         return -1;
     }
 
@@ -217,11 +232,18 @@ int main()
 
     while (true)
     {
-        int client_socket = accept(server_socket, NULL, NULL);
-        std::thread(handle_client, client_socket).detach(); // 为每个客户端启动一个新线程
+        SocketHandle client_socket = accept(server_socket, NULL, NULL);
+        if (client_socket == kInvalidSocket)
+        {
+            std::cerr << "Accept failed. err=" << NetLastError() << std::endl;
+            continue;
+        }
+
+        std::thread(handle_client, client_socket).detach();
     }
 
-    close(server_socket);
-
+    // unreachable in current design, but keep for completeness
+    NetClose(server_socket);
+    NetShutdown();
     return 0;
 }

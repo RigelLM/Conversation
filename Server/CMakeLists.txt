@@ -10,3 +10,7 @@ file(GLOB_RECURSE APP_SRC_FILES
 
 # 2. 创建可执行文件
 add_executable(Server ${APP_SRC_FILES})
+
+if (WIN32)
+  target_link_libraries(Server PRIVATE ws2_32)
+endif()
